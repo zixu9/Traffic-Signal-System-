@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Traffic Signal System</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div class="container">
+
+  <h1 class="page-title">Traffic signal system</h1>
+  <p class="page-sub">Intersection control and emergency priority simulator</p>
+
+  <div class="top-grid">
+    <!-- Input card -->
+    <div class="card">
+      <div class="card-label">Road input</div>
+      <div id="road-inputs"></div>
+    </div>
+
+    <!-- Status card -->
+    <div class="card">
+      <div class="card-label">Signal status</div>
+      <div class="status-rows" id="status-rows"></div>
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" onclick="startSim()">
+    <span class="run-dot"></span> Run simulation
+  </button>
+
+  <div class="bot-grid">
+    <!-- Queue card -->
+    <div class="card">
+      <div class="card-label">Processing queue</div>
+      <table class="queue-table">
+        <thead>
+          <tr><th>#</th><th>Road</th><th>Vehicles</th><th>Duration</th><th>Status</th></tr>
+        </thead>
+        <tbody id="q-body">
+          <tr><td colspan="5" style="color:var(--text-hint);font-style:italic;padding:10px 6px;">Enter values above and run.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Log card -->
+    <div class="card">
+      <div class="card-label">System log</div>
+      <div class="log-wrap" id="log-wrap">
+        <div class="ll-ph">Awaiting simulation start...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const ROADS = ['North','South','East','West'];
+  const TIME_PER_V=2, MIN_G=5, MAX_G=60, AMB_TIME=10, YEL_TIME=2;
+  const COMPASS = {North:'N',South:'S',East:'E',West:'W'};
+  const DEFAULTS = [[8,0],[5,1],[12,0],[3,0]];
+
+  const calcDur = (v,a) => a>0 ? Math.max(AMB_TIME, v*TIME_PER_V) : Math.min(Math.max(v*TIME_PER_V, MIN_G), MAX_G);
+  const sleep   = ms => new Promise(r => setTimeout(r, ms));
+  const el      = id => document.getElementById(id);
+  const rid     = r  => r.toLowerCase();
+
+  function buildUI() {
+    el('road-inputs').innerHTML = ROADS.map((r,i) => `
+      <div class="road-row">
+        <div class="road-name"><span class="compass-badge">${COMPASS[r]}</span>${r} road</div>
+        <div class="input-row">
+          <div class="igroup"><label>Vehicles</label><input type="number" id="v-${rid(r)}" min="0" value="${DEFAULTS[i][0]}"/></div>
+          <div class="igroup"><label>Ambulances</label><input type="number" id="a-${rid(r)}" min="0" value="${DEFAULTS[i][1]}"/></div>
+        </div>
+      </div>`).join('');
+
+    el('status-rows').innerHTML = ROADS.map(r => `
+      <div class="srow" id="srow-${rid(r)}">
+        <div class="sig" id="sig-${rid(r)}"></div>
+        <div style="flex:1;">
+          <div class="sname">${r}</div>
+          <div class="smeta" id="smeta-${rid(r)}">—</div>
+        </div>
+        <div class="stimer" id="stimer-${rid(r)}">—</div>
+      </div>`).join('');
+  }
+
+  function getInputs() {
+    return ROADS.map(r => ({
+      road: r, id: rid(r),
+      v: Math.max(0, parseInt(el(`v-${rid(r)}`).value)||0),
+      a: Math.max(0, parseInt(el(`a-${rid(r)}`).value)||0),
+    }));
+  }
+
+  function setSig(r, state) {
+    const sig=el(`sig-${r}`) , te=el(`stimer-${r}`), sr=el(`srow-${r}`);
+    sig.className='sig'; te.className='stimer'; sr.classList.remove('has-amb');
+    if(state==='green')  { sig.classList.add('s-green');  te.classList.add('t-green'); }
+    if(state==='yellow') { sig.classList.add('s-yellow'); te.classList.add('t-yellow'); }
+    if(state==='red')    { sig.classList.add('s-red'); }
+    if(state==='emerg')  { sig.classList.add('s-emerg');  te.classList.add('t-emerg'); sr.classList.add('has-amb'); }
+  }
+  function setMeta(r,t)  { el(`smeta-${r}`).textContent=t; }
+  function setTimer(r,v) { el(`stimer-${r}`).textContent= v==null ? '—' : v; }
+  function resetAll()    { ROADS.forEach(r => { setSig(rid(r),'idle'); setMeta(rid(r),'—'); setTimer(rid(r),null); }); }
+
+  function log(msg, cls='') {
+    const lb=el('log-wrap');
+    const ph=lb.querySelector('.ll-ph'); if(ph) ph.remove();
+    const d=document.createElement('div');
+    d.className=`ll ${cls}`; d.textContent=msg;
+    lb.appendChild(d); lb.scrollTop=lb.scrollHeight;
+  }
+  function clearLog() { el('log-wrap').innerHTML='<div class="ll-ph">Starting...</div>'; }
+
+  function buildQueue(sorted) {
+    el('q-body').innerHTML = sorted.map((item,i) => {
+      const empty = item.v===0 && item.a===0;
+      const pill = empty
+        ? '<span class="pill pill-skip">skip</span>'
+        : item.a>0 ? '<span class="pill pill-emerg">emergency</span>'
+        : '<span class="pill pill-wait">waiting</span>';
+      const dur = empty ? '—' : `${item.dur}s`;
+      return `<tr id="qr-${item.id}" class="${item.a>0&&!empty?'q-emerg':''}">
+        <td>${i+1}</td><td><b>${item.road}</b></td>
+        <td>${item.v}${item.a>0 ? ' +'+item.a+'amb' : ''}</td>
+        <td>${dur}</td><td id="qs-${item.id}">${pill}</td></tr>`;
+    }).join('');
+  }
+
+  function setQS(r, pill) {
+    const e=el(`qs-${r}`); if(e) e.innerHTML=pill;
+    const row=el(`qr-${r}`); if(!row) return;
+    row.classList.remove('q-active','q-emerg');
+    if(pill.includes('active')) row.classList.add('q-active');
+  }
+
+  let running = false;
+  async function startSim() {
+    if(running) return; running=true;
+    const btn=el('run-btn');
+    btn.disabled=true;
+    btn.innerHTML='<span class="run-dot" style="background:#E9A84C"></span> Running...';
+    clearLog(); resetAll();
+
+    const data = getInputs();
+    data.forEach(d => { d.dur = calcDur(d.v, d.a); });
+    const sorted = [...data].sort((a,b) => b.a!==a.a ? b.a-a.a : b.v-a.v);
+
+    buildQueue(sorted);
+
+    log('Current traffic status', 'll-i');
+    data.forEach(d => log(`${d.road}: ${d.v} vehicle(s)${d.a>0 ? ' · '+d.a+' ambulance(s)' : ''}`, d.a>0?'ll-e':'ll'));
+    log('——', 'll-i');
+
+    data.forEach(d => {
+      if(d.a>0) { el(`srow-${d.id}`).classList.add('has-amb'); setMeta(d.id, d.a+' ambulance(s)'); }
+      else if(d.v>0) setMeta(d.id, d.v+' vehicles');
+      else           setMeta(d.id, 'empty');
+    });
+
+    await sleep(500);
+
+    for(const item of sorted) {
+      if(item.v===0 && item.a===0) {
+        log(`${item.road}: no traffic, skipping`, 'll-s');
+        setQS(item.id, '<span class="pill pill-skip">skipped</span>');
+        setSig(item.id, 'idle'); setTimer(item.id, null);
+        await sleep(250); continue;
+      }
+      const isE = item.a > 0;
+      if(isE) {
+        log(`Emergency priority: ambulance on ${item.road}`, 'll-e');
+        setSig(item.id,'emerg');
+        setQS(item.id,'<span class="pill pill-active">active — emergency</span>');
+      } else {
+        log(`Green light: ${item.road} (${item.v} vehicles, ${item.dur}s)`, 'll-g');
+        setSig(item.id,'green');
+        setQS(item.id,'<span class="pill pill-active">active</span>');
+      }
+
+      for(let t=item.dur; t>0; t--) { setTimer(item.id, t); await sleep(1000); }
+
+      log(`Yellow light: ${item.road} (clearing)`, 'll-y');
+      setSig(item.id,'yellow');
+      setQS(item.id,'<span class="pill pill-clear">clearing</span>');
+      setTimer(item.id, null);
+      for(let t=YEL_TIME; t>0; t--) { setTimer(item.id, t); await sleep(1000); }
+
+      log(`Red light: ${item.road}`, 'll-r');
+      setSig(item.id,'red'); setTimer(item.id,null);
+      setMeta(item.id,'done');
+      setQS(item.id,'<span class="pill pill-done">done</span>');
+      await sleep(350);
+    }
+
+    log('Simulation complete.', 'll-i');
+    btn.disabled=false;
+    btn.innerHTML='<span class="run-dot"></span> Run again';
+    running=false;
+  }
+
+  buildUI();
+</script>
+</body>
+</html>
