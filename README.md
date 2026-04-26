@@ -11,10 +11,10 @@ Traffic Signal System is a project with python(backend), html(frontend), and css
 <h4>•🧑‍💻How to Run it</h4>
 
 **Open your terminal and run these commands:**
-
-cd project-directory<br>
-python app.py<br>
-
+|Commands|
+|--------|
+|cd project-directory|
+|python app.py|
 Then go to http://localhost:8000
 
 ###
