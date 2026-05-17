@@ -1,5 +1,5 @@
-# 🚦Traffic Signal System 
-Traffic Signal System is a project with python(backend), html(frontend), and css(styling).It uses http.server module gor frontend in python.
+# 🚦Traffic Cop 
+Traffic Cop is a project with python(backend), html(frontend), and css(styling).It uses http.server module gor frontend in python.
 
 ###
 <h4>•🗂️File Structure</h4>
